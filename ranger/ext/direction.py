@@ -20,6 +20,8 @@ False
 
 from __future__ import (absolute_import, division, print_function)
 
+import math
+
 
 class Direction(dict):
 
@@ -94,6 +96,10 @@ class Direction(dict):
     def cycle(self):
         return self.get('cycle') in (True, 'true', 'on', 'yes')
 
+    def one_indexed(self):
+        return ('one_indexed' in self and
+                self.get('one_indexed') in (True, 'true', 'on', 'yes'))
+
     def multiply(self, n):
         for key in ('up', 'right', 'down', 'left'):
             try:
@@ -127,7 +133,10 @@ class Direction(dict):
         pos = direction
         if override is not None:
             if self.absolute():
-                pos = override
+                if self.one_indexed():
+                    pos = override - 1
+                else:
+                    pos = override
             else:
                 pos *= override
         if self.pages():
@@ -142,8 +151,16 @@ class Direction(dict):
         if self.cycle():
             cycles, pos = divmod(pos, (maximum + offset - minimum))
             self['_move_cycles'] = int(cycles)
-            return int(minimum + pos)
-        return int(max(min(pos, maximum + offset - 1), minimum))
+            ret = minimum + pos
+        else:
+            ret = max(min(pos, maximum + offset - 1), minimum)
+        # Round towards the direction we're moving from.
+        # From the UI point of view, round down. See: #912.
+        if direction < 0:
+            ret = int(math.ceil(ret))
+        else:
+            ret = int(ret)
+        return ret
 
     def move_cycles(self):
         return self.get('_move_cycles', 0)

@@ -67,21 +67,24 @@ def main(
         fm.copy_config_files(args.copy_config)
         return 0
     if args.list_tagged_files:
+        if args.clean:
+            print("Can't access tag data in clean mode", file=sys.stderr)
+            return 1
         fm = FM()
         try:
             if sys.version_info[0] >= 3:
                 fobj = open(fm.datapath('tagged'), 'r', errors='replace')
             else:
                 fobj = open(fm.datapath('tagged'), 'r')
-        except OSError:
-            pass
-        else:
-            for line in fobj.readlines():
-                if len(line) > 2 and line[1] == ':':
-                    if line[0] in args.list_tagged_files:
-                        sys.stdout.write(line[2:])
-                elif line and '*' in args.list_tagged_files:
-                    sys.stdout.write(line)
+        except OSError as ex:
+            print('Unable to open `tagged` data file: {0}'.format(ex), file=sys.stderr)
+            return 1
+        for line in fobj.readlines():
+            if len(line) > 2 and line[1] == ':':
+                if line[0] in args.list_tagged_files:
+                    sys.stdout.write(line[2:])
+            elif line and '*' in args.list_tagged_files:
+                sys.stdout.write(line)
         return 0
 
     SettingsAware.settings_set(Settings())
@@ -90,7 +93,10 @@ def main(
         args.selectfile = os.path.abspath(args.selectfile)
         args.paths.insert(0, os.path.dirname(args.selectfile))
 
-    paths = args.paths or ['.']
+    if args.paths:
+        paths = [p[7:] if p.startswith('file:///') else p for p in args.paths]
+    else:
+        paths = [os.environ.get('PWD', os.getcwd())]
     paths_inaccessible = []
     for path in paths:
         try:
@@ -101,17 +107,21 @@ def main(
         if not os.access(path_abs, os.F_OK):
             paths_inaccessible += [path]
     if paths_inaccessible:
-        print("Inaccessible paths: %s" % paths)
+        print('Inaccessible paths: {0}'.format(paths), file=sys.stderr)
         return 1
 
     profile = None
     exit_msg = ''
     exit_code = 0
-    try:
+    try:  # pylint: disable=too-many-nested-blocks
         # Initialize objects
         fm = FM(paths=paths)
         FileManagerAware.fm_set(fm)
         load_settings(fm, args.clean)
+
+        if args.show_only_dirs:
+            from ranger.container.directory import InodeFilterConstants
+            fm.settings.global_inode_type_filter = InodeFilterConstants.DIRS
 
         if args.list_unused_keys:
             from ranger.ext.keybinding_parser import (special_keys,
@@ -141,10 +151,27 @@ def main(
         if fm.settings.preview_images and fm.settings.use_preview_script:
             if not os.path.exists(args.cachedir):
                 os.makedirs(args.cachedir)
-        # Create data directory
+
         if not args.clean:
+            # Create data directory
             if not os.path.exists(args.datadir):
                 os.makedirs(args.datadir)
+
+            # Restore saved tabs
+            tabs_datapath = fm.datapath('tabs')
+            if fm.settings.save_tabs_on_exit and os.path.exists(tabs_datapath) and not args.paths:
+                try:
+                    with open(tabs_datapath, 'r') as fobj:
+                        tabs_saved = fobj.read().partition('\0\0')
+                        fm.start_paths += tabs_saved[0].split('\0')
+                    if tabs_saved[-1]:
+                        with open(tabs_datapath, 'w') as fobj:
+                            fobj.write(tabs_saved[-1])
+                    else:
+                        os.remove(tabs_datapath)
+                except OSError as ex:
+                    LOG.error('Unable to restore saved tabs')
+                    LOG.exception(ex)
 
         # Run the file manager
         fm.initialize()
@@ -240,19 +267,21 @@ def parse_arguments():
     parser.add_option('--copy-config', type='string', metavar='which',
                       help="copy the default configs to the local config directory. "
                       "Possible values: all, rc, rifle, commands, commands_full, scope")
-    parser.add_option('--choosefile', type='string', metavar='PATH',
+    parser.add_option('--choosefile', type='string', metavar='OUTFILE',
                       help="Makes ranger act like a file chooser. When opening "
                       "a file, it will quit and write the name of the selected "
-                      "file to PATH.")
-    parser.add_option('--choosefiles', type='string', metavar='PATH',
+                      "file to OUTFILE.")
+    parser.add_option('--choosefiles', type='string', metavar='OUTFILE',
                       help="Makes ranger act like a file chooser for multiple files "
                       "at once. When opening a file, it will quit and write the name "
-                      "of all selected files to PATH.")
-    parser.add_option('--choosedir', type='string', metavar='PATH',
+                      "of all selected files to OUTFILE.")
+    parser.add_option('--choosedir', type='string', metavar='OUTFILE',
                       help="Makes ranger act like a directory chooser. When ranger quits"
-                      ", it will write the name of the last visited directory to PATH")
+                      ", it will write the name of the last visited directory to OUTFILE")
     parser.add_option('--selectfile', type='string', metavar='filepath',
                       help="Open ranger with supplied file selected.")
+    parser.add_option('--show-only-dirs', action='store_true',
+                      help="Show only directories, no files or links")
     parser.add_option('--list-unused-keys', action='store_true',
                       help="List common keys which are not bound to any action.")
     parser.add_option('--list-tagged-files', type='string', default=None,
@@ -270,7 +299,7 @@ def parse_arguments():
     def path_init(option):
         argval = args.__dict__[option]
         try:
-            path = os.path.realpath(argval)
+            path = os.path.abspath(argval)
         except OSError as ex:
             sys.stderr.write(
                 '--{0} is not accessible: {1}\n{2}\n'.format(option, argval, str(ex)))
@@ -327,19 +356,6 @@ def load_settings(  # pylint: disable=too-many-locals,too-many-branches,too-many
                 LOG.debug("Loaded custom commands from '%s'", custom_comm_path)
             sys.dont_write_bytecode = old_bytecode_setting
 
-        allow_access_to_confdir(ranger.args.confdir, False)
-
-        # Load rc.conf
-        custom_conf = fm.confpath('rc.conf')
-        default_conf = fm.relpath('config', 'rc.conf')
-
-        if os.environ.get('RANGER_LOAD_DEFAULT_RC', 'TRUE').upper() != 'FALSE':
-            fm.source(default_conf)
-        if os.access(custom_conf, os.R_OK):
-            fm.source(custom_conf)
-
-        allow_access_to_confdir(ranger.args.confdir, True)
-
         # XXX Load plugins (experimental)
         plugindir = fm.confpath('plugins')
         try:
@@ -376,6 +392,17 @@ def load_settings(  # pylint: disable=too-many-locals,too-many-branches,too-many
             ranger.fm = None
 
         allow_access_to_confdir(ranger.args.confdir, False)
+        # Load rc.conf
+        custom_conf = fm.confpath('rc.conf')
+        default_conf = fm.relpath('config', 'rc.conf')
+
+        custom_conf_is_readable = os.access(custom_conf, os.R_OK)
+        if (os.environ.get('RANGER_LOAD_DEFAULT_RC', 'TRUE').upper() != 'FALSE' or
+                not custom_conf_is_readable):
+            fm.source(default_conf)
+        if custom_conf_is_readable:
+            fm.source(custom_conf)
+
     else:
         fm.source(fm.relpath('config', 'rc.conf'))
 

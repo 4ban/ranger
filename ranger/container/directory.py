@@ -93,6 +93,12 @@ def mtimelevel(path, level):
     return mtime
 
 
+class InodeFilterConstants(object):  # pylint: disable=too-few-public-methods
+    DIRS = 'd'
+    FILES = 'f'
+    LINKS = 'l'
+
+
 class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public-methods
         FileSystemObject, Accumulator, Loadable):
     is_directory = True
@@ -108,6 +114,7 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
     files_all = None
     filter = None
     temporary_filter = None
+    narrow_filter = None
     inode_type_filter = None
     marked_items = None
     scroll_begin = 0
@@ -122,8 +129,8 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
     content_outdated = False
     content_loaded = False
 
-    vcs = None
     has_vcschild = False
+    _vcs_signal_handler_installed = False
 
     cumulative_size_calculated = False
 
@@ -160,10 +167,19 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
 
         self.settings = LocalSettings(path, self.settings)
 
-        if self.settings.vcs_aware:
-            self.vcs = Vcs(self)
-
         self.use()
+
+    @lazy_property
+    def vcs(self):
+        if not self._vcs_signal_handler_installed:
+            self.settings.signal_bind(
+                'setopt.vcs_aware', self.vcs__reset,  # pylint: disable=no-member
+                weak=True, autosort=False,
+            )
+            self._vcs_signal_handler_installed = True
+        if self.settings.vcs_aware:
+            return Vcs(self)
+        return None
 
     def signal_function_factory(self, function):
         def signal_function():
@@ -252,11 +268,32 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
                         return False
                 return True
             filters.append(hidden_filter_func)
+        if self.narrow_filter:
+            # pylint: disable=unsupported-membership-test
+
+            # Pylint complains that self.narrow_filter is by default
+            # None but the execution won't reach this line if it is
+            # still None.
+            filters.append(lambda fobj: fobj.basename in self.narrow_filter)
+        if self.settings.global_inode_type_filter or self.inode_type_filter:
+            def inode_filter_func(obj):
+                # Use local inode_type_filter if present, global otherwise
+                inode_filter = self.inode_type_filter or self.settings.global_inode_type_filter
+                # Apply filter
+                if InodeFilterConstants.DIRS in inode_filter and \
+                        obj.is_directory:
+                    return True
+                elif InodeFilterConstants.FILES in inode_filter and \
+                        obj.is_file and not obj.is_link:
+                    return True
+                elif InodeFilterConstants.LINKS in inode_filter and \
+                        obj.is_link:
+                    return True
+                return False
+            filters.append(inode_filter_func)
         if self.filter:
             filter_search = self.filter.search
             filters.append(lambda fobj: filter_search(fobj.basename))
-        if self.inode_type_filter:
-            filters.append(self.inode_type_filter)
         if self.temporary_filter:
             temporary_filter_search = self.temporary_filter.search
             filters.append(lambda fobj: temporary_filter_search(fobj.basename))
@@ -436,6 +473,8 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
         Use this sparingly since it takes rather long.
         """
         self.content_outdated = False
+        if self.settings.freeze_files:
+            return
 
         if not self.loading:
             if not self.loaded:

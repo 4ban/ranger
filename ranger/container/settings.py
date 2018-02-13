@@ -7,6 +7,7 @@ import re
 import os.path
 from inspect import isfunction
 
+import ranger
 from ranger.ext.signals import SignalDispatcher
 from ranger.core.shared import FileManagerAware
 from ranger.gui.colorscheme import _colorscheme_name_to_class
@@ -27,6 +28,9 @@ ALLOWED_SETTINGS = {
     'autosave_bookmarks': bool,
     'autoupdate_cumulative_size': bool,
     'cd_bookmarks': bool,
+    'cd_tab_case': str,
+    'cd_tab_fuzzy': bool,
+    'clear_filters_on_dir_change': bool,
     'collapse_preview': bool,
     'colorscheme': str,
     'column_ratios': (tuple, list),
@@ -38,13 +42,19 @@ ALLOWED_SETTINGS = {
     'draw_borders': bool,
     'draw_progress_bar_in_status_bar': bool,
     'flushinput': bool,
+    'freeze_files': bool,
+    'global_inode_type_filter': str,
     'hidden_filter': str,
+    'hostname_in_titlebar': bool,
     'idle_delay': int,
+    'iterm2_font_width': int,
+    'iterm2_font_height': int,
     'line_numbers': str,
     'max_console_history_size': (int, type(None)),
     'max_history_size': (int, type(None)),
     'metadata_deep_search': bool,
     'mouse_enabled': bool,
+    'one_indexed': bool,
     'open_all_images': bool,
     'padding_right': bool,
     'preview_directories': bool,
@@ -53,39 +63,41 @@ ALLOWED_SETTINGS = {
     'preview_images_method': str,
     'preview_max_size': int,
     'preview_script': (str, type(None)),
+    'save_backtick_bookmark': bool,
     'save_console_history': bool,
+    'save_tabs_on_exit': bool,
     'scroll_offset': int,
     'shorten_title': int,
     'show_cursor': bool,  # TODO: not working?
-    'show_selection_in_titlebar': bool,
     'show_hidden_bookmarks': bool,
     'show_hidden': bool,
+    'show_selection_in_titlebar': bool,
     'sort_case_insensitive': bool,
     'sort_directories_first': bool,
     'sort_reverse': bool,
-    'sort_unicode': bool,
     'sort': str,
+    'sort_unicode': bool,
     'status_bar_on_top': bool,
-    'hostname_in_titlebar': bool,
     'tilde_in_titlebar': bool,
     'unicode_ellipsis': bool,
     'update_title': bool,
     'update_tmux_title': bool,
     'use_preview_script': bool,
-    'viewmode': str,
     'vcs_aware': bool,
     'vcs_backend_bzr': str,
     'vcs_backend_git': str,
     'vcs_backend_hg': str,
     'vcs_backend_svn': str,
+    'viewmode': str,
     'wrap_scroll': bool,
     'xterm_alt_key': bool,
-    'clear_filters_on_dir_change': bool,
 }
 
 ALLOWED_VALUES = {
+    'cd_tab_case': ['sensitive', 'insensitive', 'smart'],
     'confirm_on_delete': ['multiple', 'always', 'never'],
     'line_numbers': ['false', 'absolute', 'relative'],
+    'one_indexed': [False, True],
     'preview_images_method': ['w3m', 'iterm2', 'urxvt', 'urxvt-full'],
     'vcs_backend_bzr': ['disabled', 'local', 'enabled'],
     'vcs_backend_git': ['enabled', 'disabled', 'local'],
@@ -143,6 +155,7 @@ class Settings(SignalDispatcher, FileManagerAware):
                 if os.path.exists(result):
                     signal.value = result
                 else:
+                    self.fm.notify("Preview script `{0}` doesn't exist!".format(result), bad=True)
                     signal.value = None
 
         elif name == 'use_preview_script':
@@ -163,6 +176,19 @@ class Settings(SignalDispatcher, FileManagerAware):
                    path=path, tags=tags, fm=self.fm)
         self.signal_emit('setopt', **kws)
         self.signal_emit('setopt.' + name, **kws)
+
+    def _get_default(self, name):
+        if name == 'preview_script':
+            if ranger.args.clean:
+                value = self.fm.relpath('data/scope.sh')
+            else:
+                value = self.fm.confpath('scope.sh')
+                if not os.path.exists(value):
+                    value = self.fm.relpath('data/scope.sh')
+        else:
+            value = DEFAULT_VALUES[self.types_of(name)[0]]
+
+        return value
 
     def get(self, name, path=None):
         assert name in ALLOWED_SETTINGS, "No such setting: {0}!".format(name)
@@ -188,8 +214,7 @@ class Settings(SignalDispatcher, FileManagerAware):
                     return self._tagsettings[tag][name]
 
         if name not in self._settings:
-            type_ = self.types_of(name)[0]
-            value = DEFAULT_VALUES[type_]
+            value = self._get_default(name)
             self._raw_set(name, value)
             self.__setattr__(name, value)
         return self._settings[name]
@@ -280,6 +305,8 @@ class LocalSettings(object):  # pylint: disable=too-few-public-methods
     def __getattr__(self, name):
         if name.startswith('_'):
             return self.__dict__[name]
+        if name.startswith('signal_'):
+            return getattr(self._parent, name)
         return self._parent.get(name, self._path)
 
     def __iter__(self):

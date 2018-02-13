@@ -23,6 +23,7 @@ from ranger.gui.ui import UI
 from ranger.container.bookmarks import Bookmarks
 from ranger.core.runner import Runner
 from ranger.ext.img_display import (W3MImageDisplayer, ITerm2ImageDisplayer,
+                                    TerminologyImageDisplayer,
                                     URXVTImageDisplayer, URXVTImageFSDisplayer, ImageDisplayer)
 from ranger.core.metadata import MetadataManager
 from ranger.ext.rifle import Rifle
@@ -104,10 +105,15 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
         self.settings.signal_bind('setopt.preview_images_method', set_image_displayer,
                                   priority=settings.SIGNAL_PRIORITY_AFTER_SYNC)
 
-        if not ranger.args.clean and self.tags is None:
-            self.tags = Tags(self.datapath('tagged'))
-        elif ranger.args.clean:
+        self.settings.signal_bind(
+            'setopt.preview_images',
+            lambda signal: signal.fm.previews.clear(),
+        )
+
+        if ranger.args.clean:
             self.tags = TagsDummy("")
+        elif self.tags is None:
+            self.tags = Tags(self.datapath('tagged'))
 
         if self.bookmarks is None:
             if ranger.args.clean:
@@ -119,6 +125,8 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
                 bookmarktype=Directory,
                 autosave=self.settings.autosave_bookmarks)
             self.bookmarks.load()
+            self.bookmarks.enable_saving_backtick_bookmark(
+                self.settings.save_backtick_bookmark)
 
         self.ui.setup_curses()
         self.ui.initialize()
@@ -185,6 +193,10 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
             'setopt.metadata_deep_search',
             lambda signal: setattr(signal.fm.metadata, 'deep_search', signal.value)
         )
+        self.settings.signal_bind(
+            'setopt.save_backtick_bookmark',
+            lambda signal: signal.fm.bookmarks.enable_saving_backtick_bookmark(signal.value)
+        )
 
     def destroy(self):
         debug = ranger.args.debug
@@ -216,6 +228,8 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
             return W3MImageDisplayer()
         elif self.settings.preview_images_method == "iterm2":
             return ITerm2ImageDisplayer()
+        elif self.settings.preview_images_method == "terminology":
+            return TerminologyImageDisplayer()
         elif self.settings.preview_images_method == "urxvt":
             return URXVTImageDisplayer()
         elif self.settings.preview_images_method == "urxvt-full":
@@ -296,15 +310,18 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
         else:
             sys.stderr.write("Unknown config file `%s'\n" % which)
 
-    @staticmethod
-    def confpath(*paths):
+    def confpath(self, *paths):
         """returns path to ranger's configuration directory"""
-        assert not ranger.args.clean, "Accessed configuration directory in clean mode"
+        if ranger.args.clean:
+            self.notify("Accessed configuration directory in clean mode", bad=True)
+            return None
         return os.path.join(ranger.args.confdir, *paths)
 
     def datapath(self, *paths):
         """returns path to ranger's data directory"""
-        assert not ranger.args.clean, "Accessed data directory in clean mode"
+        if ranger.args.clean:
+            self.notify("Accessed data directory in clean mode", bad=True)
+            return None
         path_compat = self.confpath(*paths)  # COMPAT
         if os.path.exists(path_compat):
             return path_compat
@@ -402,3 +419,10 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
                     fobj.write(self.thisdir.path)
             self.bookmarks.remember(self.thisdir)
             self.bookmarks.save()
+
+            # Save tabs
+            if not ranger.args.clean and self.settings.save_tabs_on_exit and len(self.tabs) > 1:
+                with open(self.datapath('tabs'), 'a') as fobj:
+                    # Don't save active tab since launching ranger changes the active tab
+                    fobj.write('\0'.join(v.path for t, v in self.tabs.items()
+                                         if t != self.current_tab) + '\0\0')

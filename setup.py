@@ -4,19 +4,26 @@
 
 from __future__ import (absolute_import, division, print_function)
 
+from distutils import log  # pylint: disable=import-error,no-name-in-module
 from hashlib import sha512
 import os
 import shutil
 
 import ranger
 
-if os.environ.get('SETUPTOOLS_USE'):
-    from setuptools import setup
-else:
-    from distutils.core import setup  # pylint: disable=import-error,no-name-in-module
-
 
 SCRIPTS_PATH = 'build_scripts'
+EXECUTABLES_PATHS = ['/ranger/data/scope.sh']
+
+
+# pylint: disable=import-error,no-name-in-module,ungrouped-imports
+if os.environ.get('SETUPTOOLS_USE'):
+    from setuptools import setup
+    from setuptools.command.install_lib import install_lib
+else:
+    from distutils.core import setup
+    from distutils.command.install_lib import install_lib
+# pylint: enable=import-error,no-name-in-module,ungrouped-imports
 
 
 def findall(directory):
@@ -43,6 +50,19 @@ def scripts_hack(*scripts):
     return scripts_path
 
 
+class InstallLib(install_lib):
+    def run(self):
+        install_lib.run(self)
+
+        # Make executables executable
+        for path in self.get_outputs():
+            for exe_path in EXECUTABLES_PATHS:
+                if path.endswith(exe_path):
+                    mode = ((os.stat(path).st_mode) | 0o555) & 0o7777
+                    log.info('changing mode of %s to %o', path, mode)
+                    os.chmod(path, mode)
+
+
 def main():
     setup(
         name='ranger-fm',
@@ -52,7 +72,7 @@ def main():
         author=ranger.__author__,
         author_email=ranger.__email__,
         license=ranger.__license__,
-        url='http://ranger.nongnu.org',
+        url='https://ranger.github.io',
         keywords='file-manager vim console file-launcher file-preview',
         classifiers=[
             'Environment :: Console',
@@ -75,6 +95,8 @@ def main():
             'Topic :: Desktop Environment :: File Managers',
             'Topic :: Utilities',
         ],
+
+        cmdclass={'install_lib': InstallLib},
 
         scripts=scripts_hack(
             ('ranger.py', 'ranger'),

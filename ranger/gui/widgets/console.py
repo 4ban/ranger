@@ -87,21 +87,28 @@ class Console(Widget):  # pylint: disable=too-many-instance-attributes,too-many-
                 fobj.close()
         Widget.destroy(self)
 
+    def _calculate_offset(self):
+        wid = self.wid - 2
+        whalf = wid // 2
+        if self.pos < whalf or len(self.line) < wid:
+            return 0
+        if self.pos > len(self.line) - (wid - whalf):
+            return len(self.line) - wid
+        return self.pos - whalf
+
     def draw(self):
         self.win.erase()
         if self.question_queue:
             assert isinstance(self.question_queue[0], tuple)
             assert len(self.question_queue[0]) == 3
-            self.addstr(0, 0, self.question_queue[0][0])
+            self.addstr(0, 0, self.question_queue[0][0][self.pos:])
             return
 
         self.addstr(0, 0, self.prompt)
         line = WideString(self.line)
-        overflow = -self.wid + len(self.prompt) + len(line) + 1
-        if overflow > 0:
-            self.addstr(0, len(self.prompt), str(line[overflow:]))
-        else:
-            self.addstr(0, len(self.prompt), self.line)
+        if line:
+            x = self._calculate_offset()
+            self.addstr(0, len(self.prompt), str(line[x:]))
 
     def finalize(self):
         move = self.fm.ui.win.move
@@ -112,7 +119,8 @@ class Console(Widget):  # pylint: disable=too-many-instance-attributes,too-many-
                 pass
         else:
             try:
-                pos = uwid(self.line[0:self.pos]) + len(self.prompt)
+                x = self._calculate_offset()
+                pos = uwid(self.line[x:self.pos]) + len(self.prompt)
                 move(self.y, self.x + min(self.wid - 1, pos))
             except curses.error:
                 pass
@@ -202,7 +210,7 @@ class Console(Widget):  # pylint: disable=too-many-instance-attributes,too-many-
             return
 
         if self.question_queue:
-            self.unicode_buffer, answer, self.pos = result
+            self.unicode_buffer, answer, _ = result
             self._answer_question(answer)
         else:
             self.unicode_buffer, self.line, self.pos = result
@@ -273,22 +281,28 @@ class Console(Widget):  # pylint: disable=too-many-instance-attributes,too-many-
         if direction.horizontal():
             # Ensure that the pointer is moved utf-char-wise
             if self.fm.py3:
+                if self.question_queue:
+                    umax = len(self.question_queue[0][0]) + 1 - self.wid
+                else:
+                    umax = len(self.line) + 1
                 self.pos = direction.move(
                     direction=direction.right(),
                     minimum=0,
-                    maximum=len(self.line) + 1,
+                    maximum=umax,
                     current=self.pos)
             else:
-                if self.fm.py3:
-                    uchar = list(self.line)
-                    upos = len(self.line[:self.pos])
+                if self.question_queue:
+                    uchar = list(self.question_queue[0][0].decode('utf-8', 'ignore'))
+                    upos = len(self.question_queue[0][0][:self.pos].decode('utf-8', 'ignore'))
+                    umax = len(uchar) + 1 - self.wid
                 else:
                     uchar = list(self.line.decode('utf-8', 'ignore'))
                     upos = len(self.line[:self.pos].decode('utf-8', 'ignore'))
+                    umax = len(uchar) + 1
                 newupos = direction.move(
                     direction=direction.right(),
                     minimum=0,
-                    maximum=len(uchar) + 1,
+                    maximum=umax,
                     current=upos)
                 self.pos = len(''.join(uchar[:newupos]).encode('utf-8', 'ignore'))
 

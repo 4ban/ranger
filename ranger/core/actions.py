@@ -64,7 +64,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
     def reset(self):
         """:reset
 
-        Reset the filemanager, clearing the directory buffer.
+        Reset the filemanager, clearing the directory buffer, reload rifle config
         """
         old_path = self.thisdir.path
         self.previews = {}
@@ -73,12 +73,17 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         self.change_mode('normal')
         if self.metadata:
             self.metadata.reset()
+        self.rifle.reload_config()
+        self.fm.tags.sync()
 
-    def change_mode(self, mode):
+    def change_mode(self, mode=None):
         """:change_mode <mode>
 
         Change mode to "visual" (selection) or "normal" mode.
         """
+        if mode is None:
+            self.fm.notify('Syntax: change_mode <mode>', bad=True)
+            return
         if mode == self.mode:  # pylint: disable=access-member-before-definition
             return
         if mode == 'visual':
@@ -225,7 +230,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         cmd_class = self.commands.get_command(command_name)
         if cmd_class is None:
             self.notify("Command not found: `%s'" % command_name, bad=True)
-            return
+            return None
         cmd = cmd_class(string, quantifier=quantifier)
 
         if cmd.resolve_macros and _MacroTemplate.delimiter in cmd.line:
@@ -248,6 +253,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
             if ranger.args.debug:
                 raise
             self.notify(ex)
+        return None
 
     def substitute_macros(self, string,  # pylint: disable=redefined-outer-name
                           additional=None, escape=False):
@@ -458,6 +464,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         """
         cwd = self.thisdir
         kw.setdefault('cycle', self.fm.settings['wrap_scroll'])
+        kw.setdefault('one_indexed', self.fm.settings['one_indexed'])
         direction = Direction(kw)
         if 'left' in direction or direction.left() > 0:
             steps = direction.left()
@@ -734,6 +741,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
     # -- Searching
     # --------------------------
 
+    # TODO: Do we still use this method? Should we remove it?
     def search_file(self, text, offset=1, regexp=True):
         if isinstance(text, str) and regexp:
             try:
@@ -742,6 +750,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 return False
         self.thistab.last_search = text
         self.search_next(order='search', offset=offset)
+        return None
 
     def search_next(self, order=None, offset=1, forward=True):
         original_order = order
@@ -792,6 +801,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 return cwd.cycle(forward=None)
 
             return cwd.cycle(forward=forward)
+        return None
 
     def set_search_method(self, order, forward=True):  # pylint: disable=unused-argument
         if order in ('search', 'tag', 'size', 'mimetype', 'ctime', 'mtime', 'atime'):
@@ -969,7 +979,8 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         if not self.settings.preview_script or not self.settings.use_preview_script:
             try:
                 return codecs.open(path, 'r', errors='ignore')
-            except OSError:
+            # IOError for Python2, OSError for Python3
+            except (IOError, OSError):
                 return None
 
         # self.previews is a 2 dimensional dict:
@@ -1003,17 +1014,13 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         try:
             stat_ = os.stat(self.settings.preview_script)
         except OSError:
-            self.fm.notify(
-                "Preview Script `%s' doesn't exist!" % self.settings.preview_script,
-                bad=True,
-            )
+            self.fm.notify("Preview script `{0}` doesn't exist!".format(
+                self.settings.preview_script), bad=True)
             return None
 
         if not stat_.st_mode & S_IEXEC:
-            self.fm.notify(
-                "Preview Script `%s' is not executable!" % self.settings.preview_script,
-                bad=True,
-            )
+            self.fm.notify("Preview script `{0}` is not executable!".format(
+                self.settings.preview_script), bad=True)
             return None
 
         data['loading'] = True
@@ -1026,7 +1033,8 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
             return path
 
         cacheimg = os.path.join(ranger.args.cachedir, self.sha1_encode(path))
-        if os.path.isfile(cacheimg) and \
+        if self.settings.preview_images and \
+                os.path.isfile(cacheimg) and \
                 os.path.getmtime(cacheimg) > os.path.getmtime(path):
             data['foundpreview'] = True
             data['imagepreview'] = True
@@ -1082,6 +1090,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 else:
                     pager.set_source(self.thisfile.get_preview_source(
                         pager.wid, pager.hei))
+            return None
 
         def on_destroy(signal):  # pylint: disable=unused-argument
             try:
@@ -1172,6 +1181,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         newtab = tablist[(current_index + offset) % len(tablist)]
         if newtab != self.current_tab:
             self.tab_open(newtab)
+        return None
 
     def tab_new(self, path=None, narg=None):
         if narg:
@@ -1179,6 +1189,7 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         for i in range(1, 10):
             if i not in self.tabs:
                 return self.tab_open(i, path)
+        return None
 
     def tab_switch(self, path, create_directory=False):
         """Switches to tab of given path, opening a new tab as necessary.

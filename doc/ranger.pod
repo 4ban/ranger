@@ -8,10 +8,11 @@ ranger - visual file manager
 =head1 SYNOPSIS
 
 B<ranger> [B<--version>] [B<--help>] [B<--debug>] [B<--clean>]
-[B<--cachedir>=I<directory>] [B<--confdir>=I<directory>] [B<--datadir>=I<directory>]
-[B<--copy-config>=I<which>]
+[B<--cachedir>=I<directory>] [B<--confdir>=I<directory>]
+[B<--datadir>=I<directory>] [B<--copy-config>=I<which>]
 [B<--choosefile>=I<target>] [B<--choosefiles>=I<target>]
 [B<--choosedir>=I<target>] [B<--selectfile>=I<filepath>]
+[B<--show-only-dirs>]
 [B<--list-unused-keys>] [B<--list-tagged-files>=I<tag>]
 [B<--profile>] [B<--cmd>=I<command>] [I<path>]
 
@@ -118,6 +119,11 @@ write the last visited directory into I<targetfile>.
 
 Open ranger with I<targetfile> selected.
 
+=item B<--show-only-dirs>
+
+Display only the directories. May be used in conjunction with
+B<--choosedir>=I<targetfile>.
+
 =item B<--list-unused-keys>
 
 List common keys which are not bound to any action in the "browser" context.
@@ -194,6 +200,10 @@ This only works in iTerm2 compiled with image preview support, but works over
 ssh.
 
 To enable this feature, set the option C<preview_images_method> to iterm2.
+
+This feature relies on the dimensions of the terminal's font.  By default, a
+width of 8 and height of 11 are used.  To use other values, set the options
+C<iterm2_font_width> and C<iterm2_font_height> to the desired values.
 
 =head3 urxvt
 
@@ -315,8 +325,8 @@ F<rifle.conf> configuration file.  You can specify as many flags as you want.
 An uppercase flag negates the effect: "ffcccFsf" is equivalent to "cs".
 
 The terminal program name for the "t" flag is taken from the environment
-variable $TERMCMD.  If it doesn't exist, it tries to extract it from $TERM and
-uses "xterm" as a fallback if that fails.
+variable $TERMCMD.  If it doesn't exist, it tries to extract it from $TERM,
+uses "x-terminal-emulator" as a fallback, and then "xterm" if that fails.
 
 Examples: C<:open_with c> will open the file that you currently point at, even
 if you have selected other files.  C<:shell -w df> will run "df" and wait for
@@ -395,6 +405,14 @@ Move up and down in the parent directory.
 
 Reload everything
 
+=item F
+
+Toggle I<freeze_files> setting.  When active (indicated by a cyan I<FROZEN>
+message in the status bar), directories and files will not be loaded, improving
+performance when all the files you need are already loaded.  This does not
+affect file previews, which can be toggled with I<zI>.  Also try disabling the
+preview of directories with I<zP>.
+
 =item ^L
 
 Redraw the screen
@@ -405,7 +423,7 @@ Inspect the current file in a bigger window.
 
 =item E
 
-Edit the current file in $EDITOR ("nano" by default)
+Edit the current file in $VISUAL otherwise $EDITOR otherwise "vim"
 
 =item S
 
@@ -682,6 +700,23 @@ though by turning on this option.
 Specify whether bookmarks should be included in the tab completion of the "cd"
 command.
 
+=item cd_tab_case [string]
+
+Changes case sensitivity for the "cd" command tab completion. Possible values are:
+
+ sensitive
+ insensitive
+ smart
+
+=item cd_tab_fuzzy [bool]
+
+Use fuzzy tab completion with the "cd" command. For example,
+B<:cd /u/lo/b<TABE<gt>> expands to B<:cd /usr/local/bin>.
+
+=item clear_filters_on_dir_change [bool]
+
+If set to 'true', persistent filters would be cleared upon leaving the directory
+
 =item collapse_preview [bool] <zc>
 
 When no preview is visible, should the last column be squeezed to make use of
@@ -736,6 +771,19 @@ Flush the input after each key hit?  One advantage is that when scrolling down
 with "j", ranger stops scrolling instantly when you release the key.  One
 disadvantage is that when you type commands blindly, some keys might get lost.
 
+=item freeze_files [bool] <F>
+
+When active, directories and files will not be loaded, improving performance
+when all the files you need are already loaded.  This does not affect file
+previews.
+
+=item global_inode_type_filter [string]
+
+Like filter_inode_type, but globally for all directories.  Useful in
+combination with B<--choosedir>:
+
+ ranger --choosedir=/tmp/x --cmd='set global_inode_type_filter d'
+
 =item hidden_filter [string]
 
 A regular expression pattern for files which should be hidden.  For example,
@@ -748,6 +796,16 @@ this pattern will hide all files that start with a dot or end with a tilde.
 The delay that ranger idly waits for user input, in milliseconds, with a
 resolution of 100ms.  Lower delay reduces lag between directory updates but
 increases CPU load.
+
+=item iterm2_font_height [integer]
+
+Change the assumed font height in iTerm2, which may help with iTerm image
+previews
+
+=item iterm2_font_width [integer]
+
+Change the assumed font width in iTerm2, which may help with iTerm image
+previews
 
 =item line_numbers [string]
 
@@ -776,6 +834,18 @@ all directories above the current one as well?
 
 Enable mouse input?
 
+=item one_indexed [bool]
+
+Start line numbers from 1.  Possible values are:
+
+ false      start line numbers from 0
+ true       start line numbers from 1
+
+=item open_all_images [bool]
+
+Open all images in this directory when running certain image viewers like feh
+or sxiv?  You can still open selected files by marking them.
+
 =item padding_right [bool]
 
 When collapse_preview is on and there is no preview, should there remain a
@@ -794,6 +864,11 @@ Preview files in the preview column?
 
 Draw images inside the console with the external program w3mimgpreview?
 
+=item preview_images_method [string]
+
+Set the preview image method. Supported methods: w3m, iterm2, urxvt,
+urxvt-full, terminology.  See I<PREVIEWS> section.
+
 =item preview_max_size [int]
 
 Avoid previewing files that exceed a certain size, in bytes.  Use a value of 0
@@ -805,10 +880,21 @@ Which script should handle generating previews?  If the file doesn't exist, or
 use_preview_script is off, ranger will handle previews itself by just printing
 the content.
 
+=item save_backtick_bookmark [bool]
+
+Save the C<`> bookmark to disk.  This bookmark is used to switch to the last
+directory by typing C<``>.
+
 =item save_console_history [bool]
 
 Should the console history be saved on exit?  If disabled, the console history
 is reset when you restart ranger.
+
+=item save_tabs_on_exit [bool]
+
+Save all tabs, except the active, on exit? The last saved tabs are restored once
+when starting the next session. Multiple sessions are stored in a stack and the
+oldest saved tabs are restored first.
 
 =item scroll_offset [integer]
 
@@ -830,6 +916,10 @@ Show dotfiles in the bookmark preview window? (Type ')
 =item show_hidden [bool] <zh>, <^H>
 
 Show hidden files?
+
+=item show_selection_in_titlebar [bool]
+
+Add the highlighted file to the path in the titlebar
 
 =item sort_case_insensitive [bool] <zc>
 
@@ -889,13 +979,19 @@ Use the preview script defined in the setting I<preview_script>?
 
 Gather and display data about version control systems. Supported vcs: git, hg.
 
-=item vcs_backend_git, vcs_backend_hg, vcs_backend_bzr [string]
+=item vcs_backend_git, vcs_backend_hg, vcs_backend_bzr, vcs_backend_svn [string]
 
 Sets the state for the version control backend. The possible values are:
 
  disabled   don't display any information.
  local      display only local state.
  enabled    display both, local and remote state. May be slow for hg and bzr.
+
+=item viewmode [string]
+
+Sets the view mode, which can be B<miller> to display the files in the
+traditional miller column view that shows multiple levels of the hierarchy, or
+B<multipane> to use multiple panes (one per tab) similar to midnight-commander.
 
 =item wrap_scroll [bool]
 
@@ -906,10 +1002,6 @@ the top and vice versa.
 
 Enable this if key combinations with the Alt Key don't work for you.
 (Especially on xterm)
-
-=item clear_filters_on_dir_change [bool]
-
-If set to 'true', persistent filters would be cleared upon leaving the directory
 
 =back
 
@@ -1512,9 +1604,15 @@ If this variable is set to FALSE, ranger will not load the default rc.conf.
 This can save time if you copied the whole rc.conf to ~/.config/ranger/ and
 don't need the default one at all.
 
+=item VISUAL
+
+Defines the editor to be used for the "E" key.  Falls back to EDITOR if
+undefined or empty.
+
 =item EDITOR
 
-Defines the editor to be used for the "E" key.  Defaults to "nano".
+Defines the editor to be used for the "E" key if VISUAL is undefined or empty.
+Defaults to "vim".
 
 =item SHELL
 
@@ -1572,11 +1670,11 @@ GNU General Public License 3 or (at your option) any later version.
 
 =over
 
-=item Download: L<http://ranger.nongnu.org/ranger-stable.tar.gz>
+=item Download: L<https://ranger.github.io/ranger-stable.tar.gz>
 
-=item The project page: L<http://ranger.nongnu.org/>
+=item The project page: L<https://ranger.github.io/>
 
-=item The mailing list: L<http://savannah.nongnu.org/mail/?group=ranger>
+=item The mailing list: L<https://savannah.nongnu.org/mail/?group=ranger>
 
 =item IRC channel: #ranger on freenode.net
 
