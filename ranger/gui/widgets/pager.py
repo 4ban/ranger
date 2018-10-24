@@ -29,6 +29,7 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
     need_clear_image = False
     need_redraw_image = False
     max_width = None
+    scrollbit = 0
 
     def __init__(self, win, embedded=False):
         Widget.__init__(self, win)
@@ -39,6 +40,7 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
         self.lines = []
         self.image = None
         self.image_drawn = False
+        self.scrollbit = 0
 
     def _close_source(self):
         if self.source and self.source_is_stream:
@@ -95,7 +97,7 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
 
             if not self.image:
                 line_gen = self._generate_lines(
-                    starty=self.scroll_begin, startx=self.startx)
+                    starty=self.scrollbit, startx=self.startx)
 
                 for line, i in zip(line_gen, range(self.hei)):
                     self._draw_line(i, line)
@@ -109,8 +111,9 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
             try:
                 self.fm.image_displayer.draw(self.image, self.x, self.y,
                                              self.wid, self.hei)
-            except ImgDisplayUnsupportedException:
+            except ImgDisplayUnsupportedException as ex:
                 self.fm.settings.preview_images = False
+                self.fm.notify(ex, bad=True)
             except Exception as ex:  # pylint: disable=broad-except
                 self.fm.notify(ex, bad=True)
             else:
@@ -233,7 +236,7 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
     def _generate_lines(self, starty, startx):
         i = starty
         if not self.source:
-            raise StopIteration
+            return
         while True:
             try:
                 line = self._get_line(i).expandtabs(4)
@@ -243,5 +246,5 @@ class Pager(Widget):  # pylint: disable=too-many-instance-attributes
                     line = line[startx:self.wid + startx]
                 yield line.rstrip().replace('\r\n', '\n')
             except IndexError:
-                raise StopIteration
+                return
             i += 1
